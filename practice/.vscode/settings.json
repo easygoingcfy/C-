@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "*.cpp": "cpp",
+        "unistd.h": "c"
+    },
+    "cmake.sourceDirectory": "/home/yu/test/C/link_list"
+}
