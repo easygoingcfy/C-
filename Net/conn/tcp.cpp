@@ -81,10 +81,12 @@ void ConnTcpClient::connect() {
   boost::asio::socket_base::keep_alive option(true);
   socket_.open(tcp::v4());
   socket_.set_option(option);
-  boost::system::error_code ec;
-  socket_.connect(server_ep_, ec);
-  if (ec) return;
-  conn_handler();
+  //boost::system::error_code ec;
+  //socket_.connect(server_ep_, ec);
+  //if (ec) return;
+  //conn_handler();
+  socket_.async_connect(server_ep_, boost::bind(&ConnTcpClient::conn_handler, shared_from_this(),
+                        boost::placeholders::_1));
 }
 
 void ConnTcpClient::run() {
@@ -193,7 +195,11 @@ void ConnTcpClient::reconnect() {
   connect();
 }
 
-void ConnTcpClient::conn_handler() {
+void ConnTcpClient::conn_handler(const boost::system::error_code &ec) {
+  if (ec) {
+    std::cout << "connect fail: " << ec.message() << std::endl;
+    return;
+  }
   if (conn_cb_) conn_cb_();
   // give some work to io_service before start
   io_service_.post(std::bind(&ConnTcpClient::do_receive, this));

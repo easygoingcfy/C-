@@ -49,7 +49,7 @@ class ConnTcpClient : public ConnInterface,
 
  private:
   void reconnect();
-  void conn_handler();
+  void conn_handler(const boost::system::error_code &ec);
   void read_handler(const boost::system::error_code &ec);
   void write_handler(const boost::system::error_code &ec);
   void do_receive();
