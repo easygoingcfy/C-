@@ -12,3 +12,6 @@ _deps
 build/
 dev_ws/
 *.out
+devel/
+.catkin_tools/
+.catkin_workspace

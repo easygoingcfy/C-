@@ -1,0 +1,20 @@
+# 焦点调整指令定义
+uint8 FOCUS_ADJUST_STOP = 1 # 停止调焦
+uint8 FOCUS_ADJUST_CONT_ZOOM_IN = 2 # 按一定档位持续放大
+uint8 FOCUS_ADJUST_CONT_ZOOM_OUT = 3 # 按一定档位持续缩小
+uint8 FOCUS_ADJUST_ZOOM_TO = 4 # 放大/缩小到指定倍数
+uint8 FOCUS_ADJUST_ZOOM_IN = 5 # 调焦+
+uint8 FOCUS_ADJUST_ZOOM_OUT = 6 # 调焦-
+uint8 FOCUS_ADJUST_MANUAL = 7 # 手动对焦
+uint8 FOCUS_ADJUST_AUTO = 8 # 自动对焦
+
+# goal
+uint8 focus_adjust_cmd # 焦点调整指令
+uint8 param # 参数。倍数模式下，该参数代表倍数（对于品灵：0.1~30X）；档位模式下，该参数代表以多少档位速度调节（对于品灵：1~7档）
+
+---
+# result
+uint8 result
+
+---
+# feedback
