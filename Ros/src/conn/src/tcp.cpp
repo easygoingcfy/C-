@@ -98,8 +98,11 @@ void ConnTcpClient::run() {
 void ConnTcpClient::close() {
   lock_guard lock(mutex_);
 
+  printf("call func close\n");
   if (!is_open()) return;
+  printf("call cancel\n");
   socket_.cancel();
+  printf("call socket close\n");
   socket_.close();
 
   io_work_.reset();
@@ -166,6 +169,7 @@ void ConnTcpClient::do_send(bool check_tx_state) {
   auto sthis = shared_from_this();
   // TODO(caofy): 自己编写缓冲区类
   auto &buf_ref = write_msgs_.front();
+  printf("send bytes \n");
   socket_.async_send(
       boost::asio::buffer(buf_ref.data(), buf_ref.length()),
       [sthis, &buf_ref](error_code error, size_t bytes_transferred) {
