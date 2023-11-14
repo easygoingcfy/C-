@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package awlink_pb.billboard;
+
+import "basic.proto";
+
+/* 广告类型 */
+enum eAdType {
+  TYPE_INVALID = 0;
+  TYPE_PICTURE = 1; // 图片
+  TYPE_VIDEO = 2;   // 视频
+}
+
+/* 广告信息 */
+message AdInfo {
+  uint32 id = 1;    // 广告ID
+  eAdType type = 2; // 广告类型
+  string url = 3;   // 广告存放地址
+  uint32 sec = 4; // 广告播放时长,单位为秒 TODO(antwork): 需要设置默认值
+}
+
+/* 广告屏ID */
+enum eBillBoardId {
+  BILLBORD_INVAILD = 0;
+  BILLBORD_INTERACTION = 1; // 交互屏
+  BILLBORD_LEFT = 2;        // 左
+  BILLBORD_RIGHT = 3;       // 右
+}
+
+/* 广告屏信息控制指令*/
+message BillBordInfo {
+  eBillBoardId billboard_id = 1;
+  repeated AdInfo ad_infos = 2;
+}
+
+
+/* 云端下发广告屏信息控制指令 */
+message BillBoardsInfo {
+  awlink_pb.basic.MsgHead head = 1;
+  repeated BillBordInfo infos = 2;
+}
+
+message BillboardInfoAck {
+    eBillBoardId id = 1;
+    eGenAck ack_type  = 2;
+}
+
+/* 广告屏控制应答 */
+message BillboardsInfoAck {
+  awlink_pb.basic.CmdAckHead ack_head = 1;
+  repeated BillboardInfoAck acks = 2;
+}
+
+/* 请求云端下发配置 */
+message BillboardReqAdCmd {
+  awlink_pb.basic.MsgHead head = 1;
+}
+
+/* 单个屏幕配置信息 */
+message BillboardCfg {
+    eBillBoardId id = 1;
+    repeated AdInfo ad_infos = 2;
+    uint32 volume = 3;
+}
+
+/* 云端下发初始化配置 */
+message BillboardsCfg {
+  awlink_pb.basic.CmdAckHead ack_head = 1;
+  repeated BillboardCfg cfgs = 2;
+
+}
+
+/* 硬件控制指令类型 */
+enum eBillBoardCtrlType {
+  TYPE_INVAILD = 0;
+  TYPE_POWER_ON = 1;    // 开机
+  TYPE_POWER_OFF = 2;   // 关机
+  TYPE_REBOOT = 3;      // 重启
+  TYPE_LOUDSPEAKER = 4; // 广告音量
+  TYPE_QUERY = 5;       // 查询当前硬件信息
+}
+
+/* 单块广告屏硬件控制指令 */
+message BillBoardCtrl{
+  eBillBoardId billboard_id = 1;
+  eBillBoardCtrlType type = 2;
+  uint32 param = 3; // 控制指令对应的参数, type = 3表示扬声器音量的大小(0-100)
+}
+
+/* 广告屏硬件控制指令 */
+message BillBoardsCtrl{
+  awlink_pb.basic.MsgHead head = 1;
+  repeated BillBoardCtrlCmd cmd = 2;
+}
+
+/* 单块广告屏硬件控制指令应答 */
+message BillBoardCtrlAck {
+  eBillBoardId id = 1;
+  eGenAck ack_type = 2;
+  uint32 param = 3; // 上报当前音量
+}
+
+/* 广告屏硬件控制指令应答 */
+message BillBoardsCtrlAck {
+  awlink_pb.basic.CmdAckHead ack_head = 1;
+  repeated BillBoardCtrlAck acks = 2;
+}

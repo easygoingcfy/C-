@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package test;
+
+message People {
+    string name = 1;
+    string age = 2;
+    uint32 id = 3;
+    uint32 seq = 4;
+    string height = 5;
+}

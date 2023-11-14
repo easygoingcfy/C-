@@ -1,0 +1,382 @@
+syntax="proto3";
+
+package awlink_pb.basic;
+
+/* 消息头 */
+message MsgHead {
+    /*
+    迅蚁终端设备ID:
+        UAV 0x00000000~0x7FFFFFFF;
+        SRC 0x80000000~0x8FFFFFFF;
+        UGV 0x90000000~0xAFFFFFFF;
+        UAP 0xE0000000~0xEFFFFFFF;
+        UPS 0xF0000000~0xFFFFFFFF;
+    */
+    uint32  dev_id = 1;
+    uint32  time_stamp = 2;     // 时间戳，Unix标准时，单位s
+    uint32  msg_uid = 3;        // 消息ID，UID生成方法： (unix timestamp)%1000000*10000 +ms数*10+随机数（0~9），发出的同一条消息此标识要相同，不同消息间此标识不能相同
+}
+
+/* 电池安装位置 */
+enum eBattInstallPos {
+    BATT_INSTALL_POS_INVALID    = 0;
+    BATT_INSTALL_POS_LEFT       = 1;     // 左侧
+    BATT_INSTALL_POS_RIGHT      = 2;     // 右侧
+}
+
+/* 电池硬件属性 */
+message BattHardAttr {
+    string          verdor       = 1;          // 电池厂商
+    string          cell_model   = 2;          // 电芯型号
+    string          pack         = 3;          // pack
+    string          bms_sw_ver   = 4;          // BMS软件版本
+    string          bms_hw_ver   = 5;          // BMS硬件版本
+}
+
+/* 电池型号序列号 */
+message BattModelSN {
+    string          model = 1;    // 电池型号，示例：TA22AH48V6A，22AH48V6分别是标称电流电压
+    string          SN    = 2;    // 电池序列号，示例: 10001A，一组两个，序号一致，序号不可以超过16384，标识符A和B
+}
+
+/* 电池工作状态信息 */
+message BattWorkInfo {
+    float           voltage = 1;                   // 电池电压，单位: V
+    float           current = 2;                   // 电池电流，单位: A
+    float           temperature = 3;               // 电池温度，单位: 摄氏度
+    float           soc = 4;                       // 剩余电量，百分比%
+    uint32          cycles = 5;                    // 循环次数，1-255之间
+    repeated float  cell_voltage = 6;              // 每组电芯电压，典型数量为13组
+}
+
+/* 电池充放电状态 */
+enum eBattChargeStatus {
+    BATT_CHARGE_STATUS_INVALID       = 0;
+    BATT_CHARGE_STATUS_DISCHARGING   = 1;    // 电池放电
+    BATT_CHARGE_STATUS_CHARGING      = 2;    // 电池充电
+}
+
+/* 电池充放电信息 */
+message BattChargeInfo {
+    eBattChargeStatus charge_status     = 1;    // 电池充放电状态
+    int32             remain_time_s     = 2;    // 0:充满; >0:充满电剩余时间; <0:过充时间; 单位：秒 
+    uint32            protection_switch = 3;    // 过压充电保护开关状态, bit 0:过压; bit 1:过流; bit 2: 高温; bit 3:低温; : 0: 关闭，1: 打开
+}
+
+/* 电池状态信息 */
+message BatteryInfo {
+    eBattInstallPos     pos           = 1;          // 电池安装位置
+    BattModelSN         model_sn      = 2;          // 电池型号序列号
+    BattWorkInfo        work_info     = 3;          // 电池工作信息
+    BattChargeInfo      charge_info   = 4;          // 电池充放电
+}
+
+/* 三维向量 */
+message XYZ {
+    float x = 1;
+    float y = 2;
+    float z = 3;
+}
+
+/* 任务参数 */
+message TaskParam {
+    float       dis_m = 1;              // 当前航线距离， 单位m，三维空间距离
+    uint32      route_id = 2;           // 航路/航线ID，运行航线/路线的ID，云平台定义，同一行程的装订路线不可重复
+    string      section_start = 3;      // 当前航段/路段起点id
+    string      section_end = 4;        // 当前航段/路段终点id
+    uint32      cur_dest_id = 5;        // 当前目的站点的id
+}
+
+/* 姿态角 */
+message AttiAngle {
+    float roll = 1;     // Roll angle (rad, -pi..+pi) or (deg, -180..180)
+    float pitch = 2;    // Pitch angle (rad, -pi..+pi) or (deg, -180..180)
+    float yaw = 3;      // Yaw angle (rad, -pi..+pi) or (deg, -180..180)
+}
+
+/* 姿态角速率 */
+message AttiAngleRate {
+    float rollspeed = 1;    // Roll angular speed (rad/s) or (deg/s)
+    float pitchspeed = 2;   // Pitch angular speed (rad/s) or (deg/s)
+    float yawspeed = 3;     // Yaw angular speed (rad/s) or (deg/s)
+}
+
+/* GPS数据 */
+message GpsData {
+    double       lat = 1;                    // 纬度(WGS84)
+    double       lon = 2;                    // 经度(WGS84)
+    float        alt = 3;                    // 海拔(AMSL, NOT WGS84)，单位：米
+    uint32       eph = 4;                    // GPS水平置信度，GPS HDOP horizontal dilution of position (unitless). If unknown, set to: UINT16_MAX
+    uint32       epv = 5;                    // GPS垂直置信度，GPS VDOP vertical dilution of position (unitless). If unknown, set to: UINT16_MAX
+    float        vel = 6;                    // GPS地速，单位：m/s
+    float        cog = 7;                    // GPS地速方向，单位：度，0～359.99
+    uint32       fix_type = 8;               // 0-1: no fix, 2: 2D fix, 3: 3D fix, 4: DGPS, 5: RTK.
+    uint32       satellites_visible = 9;     // 卫星数
+}
+
+/* 控制模式 */
+enum eUAVGuidCtrlMode {
+    UAV_GUID_CTRL_MODE_INVALID = 0;
+    UAV_GUID_CTRL_MODE_NED_VEL = 1;      // 速度控制模式，基于北东地参考坐标系
+    UAV_GUID_CTRL_MODE_NED_POS = 2;      // 位置控制模式，基于北东地参考坐标系
+    UAV_GUID_CTRL_MODE_BODY_VEL = 3;     // 速度控制模式，基于机体参考坐标系
+    UAV_GUID_CTRL_MODE_BODY_POS = 4;     // 位置控制模式，基于机体参考坐标系
+}
+
+/* 导引控制数据 */
+message UAVGuidCtrlData {
+    /*
+    迅蚁终端设备ID:
+        UAV 0x00000000~0x7FFFFFFF;
+        SRC 0x80000000~0x8FFFFFFF;
+        UGV 0x90000000~0xAFFFFFFF;
+        UAP 0xE0000000~0xEFFFFFFF;
+        UPS 0xF0000000~0xFFFFFFFF;
+    */
+    uint32              dev_id = 1;
+    eUAVGuidCtrlMode    ctrl_mode = 2;  // 控制模式
+    XYZ	                ctrl_data = 3;	// 控制量
+}
+
+/* 伺服系统状态 */
+message ServoStatus {
+    float    pos_mm = 1;        // 绝对位置，单位mm
+    float    pos_percent = 2;   // 相对位置，单位：百分比
+    float    vel = 3;           // 速度，单位mm/s
+}
+
+/* 摄像头状态 */
+enum eCameraStatus {
+    CAMERA_STATUS_INVALID = 0;
+    CAMERA_STATUS_CLOSE = 1;   // 关闭
+    CAMERA_STATUS_OPEN = 2;    // 打开
+    CAMERA_STATUS_ERROR = 3;   // 故障
+}
+
+/* 摄像头的数据 */
+message TowerCamInfo {
+    eCameraStatus  status = 1;     // 摄像头状态
+    int32          pitch_deg = 2;  // 摄像头抬头低头的角度，单位：度
+    int32          yaw_deg = 3;    // 摄像头左右转头的角度，单位：度
+    uint32         scale = 4;      // 摄像头放大的倍率
+}
+
+/* 相机在设备的朝向 */
+enum eCamOrient {
+    CAMERA_ORIENT_INVALID = 0;
+    CAMERA_ORIENT_DOWN    = 1;     // 下视
+    CAMERA_ORIENT_FRONT   = 2;     // 前视
+}
+
+/* 设备某个方向的一组相机 */
+message DevOrientCamSet {
+    eCamOrient     cam_orient = 1;    // 相机朝向，前/下
+    uint32         cam_pos    = 2;    // 相机位置，按顺时针方向，从低bit开始匹配相机，最低位代表最左侧相机，置1配置，置0不配置
+}
+
+/* 指定传图相机控制参数 */
+message SpecifyTranImgCmd {
+    MsgHead            head = 1;
+    DevOrientCamSet    orient_cam_set = 2;    // 设备上某个方向的相机
+}
+
+/* 指定传图相机应答参数 */
+message SpecifyTranImgAck {
+    MsgHead            head = 1;
+    eGenAck            ack_type = 2;          // 命令应答类型
+    DevOrientCamSet    orient_cam_set = 3;    // 设备上某个方向的相机
+}
+
+/* 传图相机改变通知参数 */
+message SpecifyTranImgNotify {
+    MsgHead            head = 1;
+    DevOrientCamSet    orient_cam_set = 2;    // 设备上某个方向的相机
+}
+
+/* 坐标系类型 */
+enum eCoordType{
+    COORD_TYPE_INVAILD = 0;
+    COORD_TYPE_NED = 1;     // 北东地坐标系
+    COORD_TYPE_BODY = 2;    // 机体坐标系
+}
+
+/* 图像识别结果 */
+message ImgIdentResult {
+    uint32      cnt = 1;                // 识别计数
+    eCoordType  coord_type = 2;         // 坐标系类型
+    XYZ         pos = 3;                // 识别位置
+    uint32      expos_value = 4;        // 图像曝光值，[0,31]， 0=自动曝光， 1～31对应曝光值
+    uint32      scene = 5;              // 图像感知【白天/黑夜】场景状态结果，1=白天，2=黑夜，3=未知（表示识别算法无法感知白天/黑夜）
+    float       rate = 6;               // 图像识别率，单位：帧/s
+    DevOrientCamSet  cam_pos = 7;       // 识别相机在设备上的朝向和位置
+}
+
+/* 温湿度数据 */
+message TempHumidity {
+    float temperature = 1;  // 温度，单位：摄氏度
+    float humidity = 2;     // 湿度
+}
+
+/* 风速风向 */
+message WindInfo {
+    float vel = 1;          // 风速，单位：m/s
+    float dirct_deg = 2;    // 风向，0～359.99
+}
+
+/* 维护参数 */
+message MaintParam {
+    float interval_day = 1; // 定检日历时间间隔，单位：天
+    float interval_min = 2; // 定检工作时长间隔，单位：min
+}
+
+/* 终端设备使用环境限制参数 */
+message EnvirLimitsParam {
+    float   temp_low_boun = 1;      // 最低温度，单位：摄氏度
+    float   temp_up_boun = 2;       // 最高温度，单位：摄氏度
+    float   altitude_up_boun = 3;   // 海拔限高，单位：m
+    uint32  wind_level = 4;         // 抗风等级，对应风1～10级
+    uint32  rain_level = 5;         // 防水等级，对应IP防水等级1～8
+}
+
+/* 电池型号参数 */
+message BattTypeParam {
+    string          type = 1;                       // 型号名称
+    float           weight = 2;                     // 重量，单位：kg
+    float           rated_capacity = 3;             // 额定容量，单位：Wh
+    float           std_ful_vol = 4;                // 标准满电电压，单位：V
+    float           std_cuf_vol = 5;                // 标准截止电压，单位：V
+    float           mea_vol_max = 6;                // 最大测量电压，单位：V
+    float           mea_vol_min = 7;                // 最小测量电压，单位：V
+    MaintParam      maint_param = 8;                // 维护参数
+    float           health_coef_lower_limit = 9;    // 电池健康系数告警下限值
+    float           health_coef_upper_limit = 10;   // 电池健康系数告警上限值
+    float           lifetime_coef = 11;             // 电池寿命系数  【参考电量计算公式F1，https://shimo.im/sheet/IlNYWugwuKQbjdTu/q3j0L】
+    repeated double  vol_crc_trans_params = 12;     // 电池电压带载转空载换算系数
+    repeated double  vol_capa_params = 13;          // 电压容量关系系数
+    repeated double  temp_capa_params  = 14;        // 温度容量关系系数
+    string           bms_sw_ver        = 15;        // 电池BMS软件版本基线 【平台录入，用于起飞校验】
+}
+
+/* 货箱参数 */
+message PkgParam {
+    float        len = 1;                // 货箱长，单位：m
+    float        wide = 2;               // 货箱宽，单位：m
+    float        height = 3;             // 货箱高，单位：m
+    float        weight = 4;             // 货箱空箱重量，单位：kg 
+    uint32       id = 5;                 // 货箱ID
+}
+
+/* 靶标视觉特征类型 命名规范：https://shimo.im/sheets/jCCchvJ6C9Qqtx9C/MODOC */
+enum eTargetVisionTraitType {
+    TARGET_VISION_TRAIT_TYPE_INVALID = 0;
+    TARGET_VISION_TRAIT_TYPE_RB      = 1;   // 红蓝 废弃,实际应用时按TARGET_VISION_TRAIT_TYPE_RB01处理
+    TARGET_VISION_TRAIT_TYPE_LOGO    = 2;   // LOGO 废弃,实际应用时按TARGET_VISION_TRAIT_TYPE_LG01处理
+    TARGET_VISION_TRAIT_TYPE_RB01    = 3;   // 红蓝
+    TARGET_VISION_TRAIT_TYPE_LG01    = 4;   // LOGO01   原始LOGO
+    TARGET_VISION_TRAIT_TYPE_LG02    = 5;   // LOGO02   LOGO靶标带双杠
+    TARGET_VISION_TRAIT_TYPE_XU01    = 6;   // 迅       迅字靶标
+    TARGET_VISION_TRAIT_TYPE_YI01    = 7;   // 蚁       蚁字靶标
+    TARGET_VISION_TRAIT_TYPE_EM01    = 8;   // 应急靶标 蓝色应急靶标
+}
+
+/* 靶标辅助识别类型 */
+enum eTargetAidedIdentType {
+    TARGET_AIDED_IDENT_TYPE_INVALID = 0;
+    TARGET_AIDED_IDENT_TYPE_NONE = 1;          // 无辅助识别类型
+    TARGET_AIDED_IDENT_TYPE_STROBE_LED = 2;    // 频闪LED
+    TARGET_AIDED_IDENT_TYPE_INFRARED = 3;      // 红外信息
+}
+
+/* 靶标使用场景类型 */
+enum eTargetUseScenarioType {
+    TARGET_USE_SCENARIO_TYPE_INVALID = 0;
+    TARGET_USE_SCENARIO_TYPE_DAY = 1;        // 白天
+    TARGET_USE_SCENARIO_TYPE_NIGHT = 2;      // 黑夜
+    TARGET_USE_SCENARIO_TYPE_COMMON = 3;     // 通用
+}
+
+/* 靶标类型参数，所有类型参数相同时才认为是同一种靶标 */
+message TargetTypeParam {
+    eTargetVisionTraitType    vision_trait_type = 1;    // 靶标视觉特征类型
+    eTargetAidedIdentType     aided_indet_type = 2;     // 靶标辅助识别类型
+    eTargetUseScenarioType    use_scenario_type = 3;    // 靶标使用场景类型
+}
+
+/* 设备出厂配置通用参数，各个终端设备出厂配置可自定义，包含该公用消息即可 */
+message CommFtyCfgParam{
+    uint32     id = 1;          // 设备ID
+    string     serial_num = 2;  // 设备序列号
+    string     type = 3;        // 设备型号
+}
+
+/* 命令应答类型 */
+enum eGenAck{
+    ACK_RESULT_INVAILD = 0;
+    ACK_RESULT_ACCEPTED = 1;                // 执行成功
+    ACK_RESULT_TEMPORARILY_REJECTED = 2;    // 临时拒绝
+    ACK_RESULT_DENIED = 3;                  // 永久拒绝
+    ACK_RESULT_UNSUPPORTED = 4;             // 不支持
+    ACK_RESULT_FAILED = 5;                  // 执行失败
+}
+
+/* 应答头 */
+message CmdAckHead {
+    MsgHead     head = 1;
+    eGenAck     ack_type = 2; // 命令应答类型
+}
+
+/* 相机图像参数 */
+message CamIspParam {
+    uint32      exposure    = 1;        // 图像曝光值，[0,31]， 0=自动曝光， 1～31对应曝光值
+    uint32      scene       = 2;        // 图像感知【白天/黑夜】场景状态结果，1=白天，2=黑夜，3=未知（表示识别算法无法感知白天/黑夜）
+}
+
+/* 设备相机参数 */
+message DevCamParam {
+    DevOrientCamSet     cam_pos     = 1;    // 相机在设备的位置
+    CamIspParam         cam_isp     = 2;    // 相机图像参数
+}
+
+/* 设备所有相机的参数 */
+message MultiCamsParam {
+    MsgHead                     head            = 1;
+    repeated DevCamParam        cam_param       = 2;    // 相机参数 
+}
+
+/* 飞机起落架参数 */
+message UAVUndercartParam {
+    float  undercart_length = 1; // 起落架长度
+    float  undercart_width = 2;  // 起落架宽度
+    float  fb_offset = 3;        // 起落架中心前后偏移货箱中心的距离
+    float  lr_offset = 4;        // 起落架中心左右偏移货箱中心的距离
+    float  under_offset = 5;     // 货箱底面距离起落架底面距离
+}
+
+/* 通信环境类型 */
+enum eCommType {
+	COMM_TYPE_INVALID    = 0;
+	COMM_TYPE_DEVELOP    = 1;	// 开发调试环境
+	COMM_TYPE_ALPHA      = 2;	// 内部测试环境
+	COMM_TYPE_BETA       = 3;	// 预发布测试环境
+	COMM_TYPE_PRODUCTION = 4;	// 发布生产环境
+}
+
+/* 时间同步远程调用接口, RPC接口由云端提供, 由[协议][域名][token]三部分组成 */
+message TimeSyncRPC {
+	string	time_sync_rpc = 1;	// 时间同步远程调用接口，如Beta环境下接口 http://antlink-debug.xyitech.com/outside/sync/config?token=MTUzM3czMituV3VBQVE9
+}
+
+/* 同步通信Key远程调用接口, RPC接口由云端提供, 由[协议][域名][token]三部分组成 */
+message CommKeySyncRPC {
+	string	comm_key_sync_rpc  = 1;	// 同步通信Key远程调用接口，如Beta环境下接口 http://antlink-debug.xyitech.com/outside/sync/mq_key?token=MThwU3czMituV3VBQVE9
+}
+
+/* 配置文件获取远程调用接口, RPC接口由云端提供, 由[协议][域名][token]三部分组成 */
+message CfgFileGetRPC {
+	string	cfg_file_get_rpc   = 1; // 获取配置文件远程调用接口，如Beta环境下接口 http://antlink-debug.xyitech.com/config/download?token=MTUzMDcjMituV3VBQVE9
+}
+
+/* 在线下载日志业务，终端日志上传到服务器的远程调用接口，RPC接口由云端提供 由[协议][域名][路径]三部分组成*/
+message FileUploadRPC {
+	string	file_upload_rpc   = 1; // 终端日志上传到oss的远程调用接口，如Beta环境下接口 http://antlink-debug.xyitech.com/uploader/oss/upload
+}

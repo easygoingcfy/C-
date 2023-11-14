@@ -2,6 +2,8 @@
 #include <string>
 #include <thread>
 
+#include <nlohmann/json.hpp>
+
 #include "client.h"
 
 

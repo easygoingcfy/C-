@@ -1,4 +1,7 @@
 #include "client.h"
+#include "nlohmann/json.hpp"
+
+using json = nlohmann::json;
 
 WebsocketClient::WebsocketClient() {
   m_client.set_access_channels(websocketpp::log::alevel::all);
@@ -41,13 +44,18 @@ void WebsocketClient::run(const std::string& server) {
 }
 
 void WebsocketClient::on_message(websocketpp::connection_hdl hdl, message_ptr msg) {
-  std::cout << "client on_message called with hdl: " << hdl.lock().get() << " and message: " << msg->get_payload()
+  std::cout << "Client on_message called with hdl: " << hdl.lock().get() << " and message: " << msg->get_payload()
             << std::endl;
   client::connection_ptr con = m_client.get_con_from_hdl(hdl);
   std::cout << "host:" << con->get_host() << " port: " << con->get_port() << 
-      " uri: " << con->get_uri();
+      " uri: " << con->get_uri() << std::endl;
+  //test parse json
+  json data = json::parse(msg->get_payload());
+  std::cout << "Receive data:" << data << std::endl;
+  data["seq"] = int(data["seq"]) + 1;
+
   websocketpp::lib::error_code ec;
-  m_client.send(hdl, msg->get_payload(), msg->get_opcode(), ec);
+  //send(hdl, data.dump());
   if (ec) {
     std::cout << "Echo faild because: " << ec.message() << std::endl;
   }
