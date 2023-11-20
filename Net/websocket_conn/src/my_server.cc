@@ -24,6 +24,12 @@ void serverThread() {
       "id": "1"
     }
   )");
+  if (data.contains("xx")) {
+    std::cout << data["xx"] << std::endl;
+  } else {
+    std::cout << "no xx" << std::endl;
+  }
+  return;
   std::string json_string = data.dump();
   std::cout << "json string: " << json_string << std::endl;
   // parse
