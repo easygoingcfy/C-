@@ -52,7 +52,6 @@ void WebsocketClient::on_message(websocketpp::connection_hdl hdl, message_ptr ms
   //test parse json
   json data = json::parse(msg->get_payload());
   std::cout << "Receive data:" << data << std::endl;
-  data["seq"] = int(data["seq"]) + 1;
 
   websocketpp::lib::error_code ec;
   //send(hdl, data.dump());
@@ -63,7 +62,14 @@ void WebsocketClient::on_message(websocketpp::connection_hdl hdl, message_ptr ms
 
 void WebsocketClient::on_open(websocketpp::connection_hdl hdl) {
   std::cout << "on_open called with hdl: " << hdl.lock().get() << std::endl;
-  send(hdl, "hello");
+  json data = json::parse(R"(
+    {
+      "billboard_id": "777",
+      "cmd_type": 1,
+      "msg": "test"
+    }
+  )");
+  send(hdl, data.dump());
 }
 
 void WebsocketClient::on_close(websocketpp::connection_hdl hdl) {

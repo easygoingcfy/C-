@@ -82,3 +82,11 @@ void WebsocketServer::run(uint16_t port) {
   run_thread.detach();
   // m_server.run();
 }
+
+std::vector<std::string> WebsocketServer::get_ips() {
+  std::vector<std::string> ips;
+  for (auto const& pair : ip_connection_map) {
+    ips.emplace_back(pair.first);
+  }
+  return ips;
+}

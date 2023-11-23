@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <thread>
 #include <string>
+#include <vector>
 
 #include "websocketpp/config/asio_no_tls.hpp"
 #include "websocketpp/server.hpp"
@@ -44,6 +45,8 @@ class WebsocketServer {
   void set_message_cb(message_cb cb) {m_message_cb = std::move(cb);};
   void set_open_cb(open_cb cb) {m_open_cb = std::move(cb);};
   void set_close_cb(close_cb cb) {m_close_cb = std::move(cb);};
+
+  std::vector<std::string> get_ips();
 
  private:
   void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg);
