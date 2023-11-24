@@ -45,6 +45,16 @@ void msg_cb(WebsocketServer* server, std::string msg) {
     }
     return;
   }
+  //回传
+  if (parsed_data.contains("debug")) {
+    response = parsed_data;
+    response.erase("debug");
+    for (auto const& ip : server->get_ips()) {
+      server->send_to_client(response.dump(), ip);
+    }
+    return;
+  }
+
   if (!parsed_data.contains("billboard_id") || !parsed_data.contains("cmd_type")) {
     for (auto const& ip : server->get_ips()) {
       response["cmd_type"] = 7;
