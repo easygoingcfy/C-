@@ -9,7 +9,7 @@
 
 
 void clientThread() {
-  std::string uri = "ws://localhost:9002";
+  std::string uri = "ws://121.199.30.205:9002";
   WebsocketClient client;
   std::cout << "client run" << std::endl;
   client.run(uri);
