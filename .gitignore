@@ -18,3 +18,5 @@ devel/
 *.pb.h
 *.pb.cc
 *.vscode
+
+*.csv
