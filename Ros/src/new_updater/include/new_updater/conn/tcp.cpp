@@ -14,7 +14,6 @@
 #include <boost/bind.hpp>
 #include <chrono>
 #include <iomanip>
-#include <iostream>
 #include <thread>
 
 namespace flight_brain {
@@ -81,28 +80,21 @@ void ConnTcpClient::connect() {
   boost::asio::socket_base::keep_alive option(true);
   socket_.open(tcp::v4());
   socket_.set_option(option);
-  //boost::system::error_code ec;
-  //socket_.connect(server_ep_, ec);
-  //if (ec) return;
-  //conn_handler();
-  socket_.async_connect(server_ep_, boost::bind(&ConnTcpClient::conn_handler, shared_from_this(),
-                        boost::placeholders::_1));
+  socket_.async_connect(server_ep_, boost::bind(&ConnTcpClient::conn_handler,
+                                                shared_from_this(), _1));
 }
 
 void ConnTcpClient::run() {
   // run io_service for async io
   io_thread_ = std::thread([this]() { io_service_.run(); });
-  //io_thread_.join();
+  io_thread_.join();
 }
 
 void ConnTcpClient::close() {
   lock_guard lock(mutex_);
 
-  printf("call func close\n");
   if (!is_open()) return;
-  printf("call cancel\n");
   socket_.cancel();
-  printf("call socket close\n");
   socket_.close();
 
   io_work_.reset();
@@ -153,11 +145,25 @@ void ConnTcpClient::do_receive() {
                             sthis->reconnect();
                             return;
                           }
+                          ROS_INFO("receive %lu bytes", bytes_transferred);
                           if (sthis->receive_cb_)
                             sthis->receive_cb_(sthis->read_buffer_,
                                                bytes_transferred);
                           sthis->do_receive();
                         });
+}
+
+std::string string_to_hex(const std::string &input) {
+  std::stringstream ss;
+  ss << std::hex
+     << std::setfill('0');  // 使用十六进制表示，并设置填充字符为 '0'
+
+  for (char ch : input) {
+    ss << std::setw(2) << static_cast<int>(ch)
+       << " ";  // 以两位宽度输出每个字符的十六进制值
+  }
+
+  return ss.str();
 }
 
 void ConnTcpClient::do_send(bool check_tx_state) {
@@ -168,14 +174,16 @@ void ConnTcpClient::do_send(bool check_tx_state) {
 
   tx_in_progress_ = true;
   auto sthis = shared_from_this();
-  // TODO(caofy): 自己编写缓冲区类
+  // TODO(caofy): write buffer class
   auto &buf_ref = write_msgs_.front();
-  printf("send bytes \n");
+  std::string buf_ref_hex = string_to_hex(buf_ref);
+  ROS_DEBUG("send: %s", buf_ref_hex.c_str());
   socket_.async_send(
       boost::asio::buffer(buf_ref.data(), buf_ref.length()),
       [sthis, &buf_ref](error_code error, size_t bytes_transferred) {
         assert(bytes_transferred <= buf_ref.length());
         if (error) {
+          ROS_ERROR("send error: %s", error.message().c_str());
           sthis->tx_in_progress_ = false;
           sthis->reconnect();
           return;
@@ -202,16 +210,19 @@ void ConnTcpClient::reconnect() {
 
 void ConnTcpClient::conn_handler(const boost::system::error_code &ec) {
   if (ec) {
-    std::cout << "connect fail: " << ec.message() << std::endl;
+    ROS_ERROR("connect error: %s", ec.message().c_str());
     return;
   }
+
   if (conn_cb_) conn_cb_();
   // give some work to io_service before start
   io_service_.post(std::bind(&ConnTcpClient::do_receive, this));
 }
+
 void ConnTcpClient::read_handler(const boost::system::error_code &ec) {
   if (ec) return;
 }
+
 void ConnTcpClient::write_handler(const boost::system::error_code &ec) {
   if (ec) return;
 }
