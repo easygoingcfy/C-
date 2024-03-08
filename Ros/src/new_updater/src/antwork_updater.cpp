@@ -11,15 +11,26 @@
 
 #include "antwork_updater.h"
 
-AntworkUpdater::AntworkUpdater() {
+AntworkUpdater::AntworkUpdater() : device_status_(0) {
     ROS_INFO("AntworkUpdater constructor");
-    msg_ = {
-        {"id", 1643},   {"dev_type", 1}, {"ack", 0},
-        {"msg set", 0}, {"msg id", 1},   {"msg data", {{"Model", "SM1B-A"}, {"Platform", "TX2"}}},
-    };
 
+    parse_update_config();
+    std::ofstream f("/tmp/update_config.json");
+    f << update_config_.dump(4);
+    exit(1);
+    parse_install_info();
+    parse_hardware_xml();
     set_ip_and_port();
     set_upload_url();
+
+    msg_ = {
+        {"id", device_id_},
+        {"dev_type", device_family_},
+        {"ack", 0},
+        {"msg set", 0},
+        {"msg id", 1},
+        {"msg data", {{"Model", device_model_.c_str()}, {"Platform", device_platform_.c_str()}}},
+    };
 
     conn_ = ConnInterface::create_client(ip_, port_, "tcp");
     conn_->set_conn_callback(std::bind(&AntworkUpdater::connection_callback, this));
@@ -36,7 +47,7 @@ void AntworkUpdater::run() {
     std::thread run_thread(&ConnInterface::run, conn_);
     run_thread.detach();
 
-    conn_->run_every(500, std::bind(&AntworkUpdater::send_heartbeat, this));
+    conn_->run_every(500, std::bind(&AntworkUpdater::report_heartbeat, this));
 }
 
 void AntworkUpdater::set_ip_and_port() {
@@ -93,6 +104,16 @@ void AntworkUpdater::receive_callback(char *data, size_t len) {
     short total_id = (short)((msg["msg set"].get<int>() << 8) | msg["msg id"].get<int>());
     ROS_INFO("msg total id : %d", total_id);
     switch (total_id) {
+        case 0x0000:
+            report_authenticate_information();
+        case 0x0002:
+            report_version_info();
+        case 0x0004:
+            report_device_status();
+        case 0x0006:
+            report_config_of_update();
+        case 0x0008:
+            set_config_of_update(msg);
         case 0x0100:
             send_log_tree();
             break;
@@ -103,19 +124,110 @@ void AntworkUpdater::receive_callback(char *data, size_t len) {
     }
 }
 
-void AntworkUpdater::send_heartbeat() {
-    msg_["ack"] = 0;
-    msg_["msg set"] = 0;
-    msg_["msg id"] = 9;
-    msg_.erase("msg data");
-    send_to_cloud(msg_.dump());
-}
-
 void AntworkUpdater::send_to_cloud(const std::string &msg) {
     int len = msg.length() + 4;
     conn_->send_bytes(&len, 4);
     conn_->send_message(msg);
     ROS_DEBUG_STREAM("AntworkUpdater send to cloud: " << msg);
+}
+
+void AntworkUpdater::report_heartbeat() {
+    msg_["ack"] = static_cast<int>(Ack::NotAck);
+    msg_["msg set"] = static_cast<int>(MsgSet::Update);
+    msg_["msg id"] = static_cast<int>(MsgId::ReportHeartbeat);
+    msg_.erase("msg data");
+    send_to_cloud(msg_.dump());
+}
+
+void AntworkUpdater::report_authenticate_information() {
+    msg_["ack"] = static_cast<int>(Ack::NotAck);
+    msg_["msg set"] = static_cast<int>(MsgSet::Update);
+    msg_["msg id"] = static_cast<int>(MsgId::ReportAuthenticateInformation);
+    msg_["msg data"] = {{"Model", device_model_.c_str()}, {"Platform", device_platform_.c_str()}};
+    send_to_cloud(msg_.dump());
+}
+
+void AntworkUpdater::report_version_info() {
+    msg_["ack"] = static_cast<int>(Ack::NotAck);
+    msg_["msg set"] = static_cast<int>(MsgSet::Update);
+    msg_["msg id"] = static_cast<int>(MsgId::ReportVersionInfo);
+    msg_["msg data"] = {{"Version", software_version_}};
+    send_to_cloud(msg_.dump());
+}
+
+void AntworkUpdater::report_device_status() {
+    msg_["ack"] = static_cast<int>(Ack::NotAck);
+    msg_["msg set"] = static_cast<int>(MsgSet::Update);
+    msg_["msg id"] = static_cast<int>(MsgId::ReportDeviceStatus);
+    msg_["msg data"] = {{"Status", device_status_}};
+    send_to_cloud(msg_.dump());
+}
+
+void AntworkUpdater::report_config_of_update() {
+    msg_["ack"] = static_cast<int>(Ack::NotAck);
+    msg_["msg set"] = static_cast<int>(MsgSet::Update);
+    msg_["msg id"] = static_cast<int>(MsgId::ReportConfigOfUpdate);
+    msg_["msg data"] = {
+        {"Policy", static_cast<int>(update_policy_)},
+        {"Open Time", update_config_["Open Time"].get<double>()},
+        {"Close Time", update_config_["Close Time"].get<double>()},
+    };
+    send_to_cloud(msg_.dump());
+}
+
+void AntworkUpdater::set_config_of_update(json &msg) {
+    if (!msg.contains("msg data") || !msg["msg data"].contains("Policy") || !msg["msg data"]["Policy"].is_number()) {
+        ROS_ERROR("msg data error");
+        return;
+    }
+    // set policy
+    try {
+        int policy = msg["msg data"]["Policy"].get<int>();
+        if (policy < 0 || policy > 2) {
+            ROS_ERROR("update_policy_ error: %d", update_policy_);
+            return;
+        }
+        update_policy_ = static_cast<UpdatePolicy>(policy);
+        switch(update_policy_) {
+            case UpdatePolicy::Auto:
+                update_policy_str_ = "Auto";
+                break;
+            case UpdatePolicy::Manual:
+                update_policy_str_ = "Manual";
+                break;
+            case UpdatePolicy::All:
+                update_policy_str_ = "All";
+                break;
+        }
+        update_config_["Policy"] = update_policy_str_;
+    } catch (std::exception &e) {
+        ROS_ERROR("set policy error: %s", e.what());
+        return;
+    }
+
+    // set time
+    try {
+        int open_time = msg["msg data"]["Open Time"].get<double>();
+        int close_time = msg["msg data"]["Close Time"].get<double>();
+    } catch (std::exception &e) {
+        ROS_ERROR("get time error: %s", e.what());
+        return;
+    }
+
+    if (open_time > 24 || open_time < 0 || close_time > 24 || close_time < 0) {
+        ROS_ERROR("open_time or close_time error: %d %d", open_time, close_time);
+        return;
+    }
+
+    update_config_["Open Time"] = open_time;
+    update_config_["Close Time"] = close_time;
+    print_json(update_config_);
+    std::ofstream f(update_config_path_);
+    if (!file) {
+        ROS_ERROR("open update_config.json error");
+        return;
+    }
+    file << update_config_.dump(4);
 }
 
 /**
@@ -128,23 +240,20 @@ void AntworkUpdater::send_info() {
 
     msg_data["Model"] = "SM1B-A";
     msg_data["Platform"] = "TX2";
-    int msg_id = 1;
     msg_["msg data"] = msg_data;
-    msg_["msg id"] = msg_id;
+    msg_["msg id"] = static_cast<int>(MsgId::ReportAuthenticateInformation);
     send_to_cloud(msg_.dump());
 
     msg_data.clear();
     msg_data["Version"] = "TX2-test-0301-7-g9b719e3";
-    msg_id = 3;
     msg_["msg data"] = msg_data;
-    msg_["msg id"] = msg_id;
+    msg_["msg id"] =static_cast<int>(MsgId::ReportVersionInfo);
     send_to_cloud(msg_.dump());
 
     msg_data.clear();
     msg_data["Status"] = 0;
-    msg_id = 5;
     msg_["msg data"] = msg_data;
-    msg_["msg id"] = msg_id;
+    msg_["msg id"] = static_cast<int>(MsgId::ReportDeviceStatus);
     send_to_cloud(msg_.dump());
 }
 
@@ -241,6 +350,16 @@ bool AntworkUpdater::uplod_file(const std::string &file_path, const std::string 
     return true;
 }
 
+
+void AntworkUpdater::handle_message_0002(json &msg) {
+    ROS_INFO("handle_message_0002");
+    json msg_data;
+    msg["ack"] = 0;
+    msg_data["Version"] = software_version_;
+    msg["msg data"] = msg_data;
+    send_to_cloud(msg.dump());
+}
+
 void AntworkUpdater::handle_message_0102(json &msg) {
     std::string file_path = msg["msg data"]["Filename"].get<std::string>();
     path abs_path = path(ws_path_) / path(file_path);
@@ -254,4 +373,88 @@ void AntworkUpdater::handle_message_0102(json &msg) {
     }
     print_json(msg);
     send_to_cloud(msg.dump());
+}
+
+void AntworkUpdater::parse_install_info() {
+    std::ifstream file(install_info_path_);
+    if (!file) {
+        ROS_ERROR("open install_info.json error");
+        return;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        std::istringstream iss(line);
+        std::string key, equal, value;
+        if (std::getline(iss, key, "=") && std::getline(iss, value)) {
+            ROS_INFO_STREAM("key: " << key << " value: " << value);
+            if (key == "VERSION") software_version_ = value;
+            if (key == "PLATFORM") device_platform_ = value;
+            if (key == "INSTALLATION_PATH") installation_path_ = value;
+        }
+    }
+    ROS_INFO_STREAM("software_version_: " << software_version_ << std::endl
+                                          << "device_platform_: " << device_platform_ << std::endl
+                                          << "installation_path_: " << installation_path_);
+}
+
+void AntworkUpdater::parse_hardware_xml() {
+    pugi::xml_document doc;
+    pugi::xml_parse_result result = doc.load_file(hardware_xml_path_.c_str());
+    if (!result) {
+        ROS_ERROR("load hardware.xml error: %s", result.description());
+        return;
+    }
+    pugi::xml_node root = doc.child("root");
+
+    pugi::xml_node flight_id = root.child("flight_ID");
+    pugi::xml_node airport_id = root.child("airport_ID");
+
+    device_family_ = 0;
+    if (!root.child("flight_ID").empty()) {
+        device_id_ = root.child("flight_ID").first_attribute().as_int();
+        device_family_ = 1;
+    } else if (!root.child("airport_ID").empty()) {
+        device_id_ = root.child("airport_ID").first_attribute().as_int();
+        device_family_ = 2;
+    } else if (!root.child("ugv_ID").empty()) {
+        device_id_ = root.child("ugv_ID").first_attribute().as_int();
+        device_family_ = 3;
+    } else if (!root.child("ground_station_info").empty()) {
+        device_id_ = root.child("ground_station_info").first_attribute().as_int();
+        device_family_ = 4;
+    } else {
+        ROS_ERROR("device_family_ is 0, hardware.xml error");
+    }
+
+    pugi::xml_node varient_type = root.child("varient_type");
+    device_model_ = varient_type.attribute("type").as_string();
+
+    pugi::xml_node serial_num = root.child("serial_num");
+    serial_num_ = serial_num.attribute("number").as_string();
+
+    ROS_INFO_STREAM("device_family_: " << device_family_ << std::endl
+                                       << "device_id_: " << device_id_ << std::endl
+                                       << "device_model_: " << device_model_ << std::endl
+                                       << "serial_num_: " << serial_num_);
+}
+
+void AntworkUpdater::parse_update_config() {
+    std::ifstream f(update_config_path_);
+    try {
+        update_config_ = json::parse(f);
+        print_json(update_config);
+        update_policy_str_ = update_config["Policy"].get<std::string>();
+        if (update_policy_str_ == "Auto") {
+            update_policy_ = UpdatePolicy::Auto;
+        } else if (update_policy_str_ == "Manual") {
+            update_policy_ = UpdatePolicy::Manual;
+        } else if (update_policy_str_ == "All") {
+            update_policy_ = UpdatePolicy::All;
+        } else {
+            ROS_ERROR("update_policy_str error: %s", update_policy_str_);
+        }
+    } catch (std::exception &e) {
+        ROS_ERROR("parse update_config error : %s", e.what());
+    }
+    print_json(update_config_);
 }
