@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 ## System dependencies are found with CMake's conventions
 find_package(Boost REQUIRED COMPONENTS system filesystem)
+find_package(CURL REQUIRED)
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -119,7 +120,7 @@ include_directories(
 # include
   ${catkin_INCLUDE_DIRS}
   ${Boost_INCLUDE_DIRS}
-  include
+  include/new_updater
 )
 
 ## Declare a C++ library
@@ -141,6 +142,7 @@ add_executable(${PROJECT_NAME}_node
   include/new_updater/conn/asio_timer.cpp
   include/new_updater/conn/interface.cpp
   include/new_updater/conn/tcp.cpp
+  include/new_updater/pugixml.cpp
   )
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -156,6 +158,7 @@ add_executable(${PROJECT_NAME}_node
 target_link_libraries(${PROJECT_NAME}_node
   ${catkin_LIBRARIES}
   ${Boost_LIBRARIES}
+  ${CURL_LIBRARIES}
 )
 
 #############

@@ -11,19 +11,16 @@
 
 #include "antwork_updater.h"
 
-
 AntworkUpdater::AntworkUpdater() {
     ROS_INFO("AntworkUpdater constructor");
-    getRosParam("ip", nh_, ip_, std::string("47.96.186.209"));
-    getRosParam("port", nh_, port_, 10896);
     msg_ = {
-        {"id", 1643},
-        {"dev_type", 1},
-        {"ack", 0},
-        {"msg set", 0},
-        {"msg id", 1},
-        {"msg data", {{"Model", "SM1B-A"}, {"Platform", "TX2"}}},
+        {"id", 1643},   {"dev_type", 1}, {"ack", 0},
+        {"msg set", 0}, {"msg id", 1},   {"msg data", {{"Model", "SM1B-A"}, {"Platform", "TX2"}}},
     };
+
+    set_ip_and_port();
+    set_upload_url();
+
     conn_ = ConnInterface::create_client(ip_, port_, "tcp");
     conn_->set_conn_callback(std::bind(&AntworkUpdater::connection_callback, this));
     conn_->set_closed_callback(std::bind(&AntworkUpdater::closed_callback, this));
@@ -39,8 +36,39 @@ void AntworkUpdater::run() {
     std::thread run_thread(&ConnInterface::run, conn_);
     run_thread.detach();
 
+    conn_->run_every(500, std::bind(&AntworkUpdater::send_heartbeat, this));
+}
 
-    conn_->run_every(5000, std::bind(&AntworkUpdater::send_heartbeat, this));
+void AntworkUpdater::set_ip_and_port() {
+    path abs_link_path = path(ws_path_) / path(link_info_path_);
+    std::ifstream f(abs_link_path.string());
+    try {
+        json link_info = json::parse(f);
+        print_json(link_info);
+        ip_ = link_info["msg"]["update"]["ip"].get<std::string>();
+        port_ = std::stoi(link_info["msg"]["update"]["port"].get<std::string>());
+    } catch (std::exception &e) {
+        ROS_ERROR("parse link_info error : %s, use default ip and port!", e.what());
+        ip_ = "47.96.186.209";
+        port_ = 10896;
+    }
+    ROS_INFO_STREAM("ip: " << ip_ << " port: " << port_);
+}
+
+void AntworkUpdater::set_upload_url() {
+    pugi::xml_document doc;
+    pugi::xml_parse_result result = doc.load_file(comm_env_path_.c_str());
+    if (!result) {
+        ROS_ERROR("load comm_env.xml error: %s", result.description());
+        ROS_INFO("use default upload_url: %s", upload_url_.c_str());
+        return;
+    }
+
+    pugi::xml_node root = doc.child("root");
+    pugi::xml_node upload = root.child("file_upload_rpc");
+    pugi::xml_attribute url = upload.attribute("upload_dir");
+    upload_url_ = url.as_string();
+    ROS_INFO_STREAM("upload_url: " << upload_url_);
 }
 
 void AntworkUpdater::connection_callback() { ROS_INFO("AntworkUpdater connect succeess!"); }
@@ -68,6 +96,8 @@ void AntworkUpdater::receive_callback(char *data, size_t len) {
         case 0x0100:
             send_log_tree();
             break;
+        case 0x0102:
+            handle_message_0102(msg);
         default:
             break;
     }
@@ -81,7 +111,6 @@ void AntworkUpdater::send_heartbeat() {
     send_to_cloud(msg_.dump());
 }
 
-
 void AntworkUpdater::send_to_cloud(const std::string &msg) {
     int len = msg.length() + 4;
     conn_->send_bytes(&len, 4);
@@ -91,7 +120,7 @@ void AntworkUpdater::send_to_cloud(const std::string &msg) {
 
 /**
  * @brief  依照旧逻辑发送设备信息，从自测看，非必要
- * 
+ *
  */
 void AntworkUpdater::send_info() {
     ROS_INFO("send info");
@@ -133,8 +162,8 @@ void AntworkUpdater::send_log_tree() {
 
 /**
  * @brief 文件夹用json表示,同级文件放在列表里
- * 
- * @param dir_path 
+ *
+ * @param dir_path
  * @return json::array
  */
 nlohmann::json AntworkUpdater::get_dir(const std::string &dir_path) {
@@ -144,7 +173,7 @@ nlohmann::json AntworkUpdater::get_dir(const std::string &dir_path) {
         return json();
     }
     json dir_list = json::array();
-    for (auto&& it : directory_iterator(p)) {
+    for (auto &&it : directory_iterator(p)) {
         if (is_symlink(it.path())) {
             continue;
         }
@@ -153,12 +182,76 @@ nlohmann::json AntworkUpdater::get_dir(const std::string &dir_path) {
         } else if (is_directory(it.path())) {
             json sub_dir = {{it.path().filename().c_str(), get_dir(it.path().string())}};
             dir_list.emplace_back(sub_dir);
-
         }
     }
     return dir_list;
 }
 
-void AntworkUpdater::print_json(json &j) {
-    std::cout << j.dump(4) << std::endl;
+void AntworkUpdater::print_json(json &j) { ROS_INFO_STREAM(j.dump(4)); }
+
+bool AntworkUpdater::uplod_file(const std::string &file_path, const std::string &url, const std::string &name) {
+    CURL *curl;
+    CURLcode res;
+
+    // Create a backup file
+    std::string backup_file_path = file_path + ".bak";
+    std::ifstream src(file_path, std::ios::binary);
+    std::ofstream dst(backup_file_path, std::ios::binary);
+    dst << src.rdbuf();
+    if (!src.good() || !dst.good()) {
+        ROS_ERROR("Failed to create backup file '%s'", backup_file_path.c_str());
+        return false;
+    }
+
+    curl_global_init(CURL_GLOBAL_ALL);
+    curl = curl_easy_init();
+    if (!curl) {
+        ROS_ERROR("curl_easy_init() failed");
+        return false;
+    }
+
+    // 设置表单数据，file和name字段
+    curl_mime *form = curl_mime_init(curl);
+    curl_mimepart *field = curl_mime_addpart(form);
+    curl_mime_name(field, "file");
+    curl_mime_filedata(field, backup_file_path.c_str());
+
+    field = curl_mime_addpart(form);
+    curl_mime_name(field, "name");
+    curl_mime_data(field, name.c_str(), CURL_ZERO_TERMINATED);
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_MIMEPOST, form);
+
+    res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        ROS_ERROR("curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        return false;
+    }
+
+    curl_easy_cleanup(curl);
+    curl_mime_free(form);
+
+    // Delete the backup file
+    if (remove(backup_file_path.c_str()) != 0) {
+        ROS_ERROR("Error deleting file %s\n", backup_file_path.c_str());
+    }
+
+    curl_global_cleanup();
+    return true;
+}
+
+void AntworkUpdater::handle_message_0102(json &msg) {
+    std::string file_path = msg["msg data"]["Filename"].get<std::string>();
+    path abs_path = path(ws_path_) / path(file_path);
+    std::cout << "abs_path: " << abs_path.string() << std::endl;
+    bool res = uplod_file(abs_path.string(), upload_url_, file_path);
+    msg["ack"] = 1;
+    if (res) {
+        msg["msg data"]["Return Code"] = 3;
+    } else {
+        msg["msg data"]["Return Code"] = 2;
+    }
+    print_json(msg);
+    send_to_cloud(msg.dump());
 }
