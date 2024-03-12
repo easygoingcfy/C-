@@ -11,13 +11,16 @@
 
 #include "antwork_updater.h"
 
+std::function<size_t(void *, size_t, size_t, FILE *)> write_callback_function;
+std::function<int(void *, double, double, double, double)> progress_callback_function;
+
+size_t write_data_wrapper(void *ptr, size_t size, size_t nmemb, FILE *stream);
+int progress_callback_wrapper(void *clientp, double dltotal, double dlnow, double ultotal, double ulnow);
+
 AntworkUpdater::AntworkUpdater() : device_status_(0) {
     ROS_INFO("AntworkUpdater constructor");
 
     parse_update_config();
-    std::ofstream f("/tmp/update_config.json");
-    f << update_config_.dump(4);
-    exit(1);
     parse_install_info();
     parse_hardware_xml();
     set_ip_and_port();
@@ -47,7 +50,7 @@ void AntworkUpdater::run() {
     std::thread run_thread(&ConnInterface::run, conn_);
     run_thread.detach();
 
-    conn_->run_every(500, std::bind(&AntworkUpdater::report_heartbeat, this));
+    conn_->run_every(1000, std::bind(&AntworkUpdater::report_heartbeat, this));
 }
 
 void AntworkUpdater::set_ip_and_port() {
@@ -55,7 +58,7 @@ void AntworkUpdater::set_ip_and_port() {
     std::ifstream f(abs_link_path.string());
     try {
         json link_info = json::parse(f);
-        print_json(link_info);
+        print_json(link_info, "link info: ");
         ip_ = link_info["msg"]["update"]["ip"].get<std::string>();
         port_ = std::stoi(link_info["msg"]["update"]["port"].get<std::string>());
     } catch (std::exception &e) {
@@ -106,19 +109,40 @@ void AntworkUpdater::receive_callback(char *data, size_t len) {
     switch (total_id) {
         case 0x0000:
             report_authenticate_information();
+            break;
         case 0x0002:
             report_version_info();
+            break;
         case 0x0004:
             report_device_status();
+            break;
         case 0x0006:
             report_config_of_update();
+            break;
         case 0x0008:
             set_config_of_update(msg);
+            break;
+        case 0x0000A:
+            // 强制更新功能
+            update_firmware(msg);
+            break;
+        case 0x0000C:
+            // 重启由system update实现，此功能弃用
+            // reboot();
+            break;
         case 0x0100:
             send_log_tree();
             break;
         case 0x0102:
             handle_message_0102(msg);
+            break;
+        case 0X0104:
+            // 该功能弃用
+            // clear_log(msg);
+            break;
+        case 0x0106:
+            change_id(msg);
+            break;
         default:
             break;
     }
@@ -128,6 +152,7 @@ void AntworkUpdater::send_to_cloud(const std::string &msg) {
     int len = msg.length() + 4;
     conn_->send_bytes(&len, 4);
     conn_->send_message(msg);
+    ROS_INFO("len: %d, msg: %s", len, msg.c_str());
     ROS_DEBUG_STREAM("AntworkUpdater send to cloud: " << msg);
 }
 
@@ -175,16 +200,26 @@ void AntworkUpdater::report_config_of_update() {
     send_to_cloud(msg_.dump());
 }
 
+void AntworkUpdater::report_result_of_set_config(Res return_code) {
+    msg_["ack"] = static_cast<int>(Ack::Ack);
+    msg_["msg set"] = static_cast<int>(MsgSet::Update);
+    msg_["msg id"] = static_cast<int>(MsgId::RequestToSetConfigOfUpdate);
+    msg_["msg data"] = {{"Return Code", static_cast<int>(return_code)}};
+    send_to_cloud(msg_.dump());
+}
+
 void AntworkUpdater::set_config_of_update(json &msg) {
     if (!msg.contains("msg data") || !msg["msg data"].contains("Policy") || !msg["msg data"]["Policy"].is_number()) {
         ROS_ERROR("msg data error");
+        report_result_of_set_config(Res::Fail);
         return;
     }
     // set policy
     try {
         int policy = msg["msg data"]["Policy"].get<int>();
         if (policy < 0 || policy > 2) {
-            ROS_ERROR("update_policy_ error: %d", update_policy_);
+            ROS_ERROR("update_policy_ error: %d", static_cast<int>(update_policy_));
+            report_result_of_set_config(Res::Fail);
             return;
         }
         update_policy_ = static_cast<UpdatePolicy>(policy);
@@ -202,32 +237,107 @@ void AntworkUpdater::set_config_of_update(json &msg) {
         update_config_["Policy"] = update_policy_str_;
     } catch (std::exception &e) {
         ROS_ERROR("set policy error: %s", e.what());
+        report_result_of_set_config(Res::Fail);
         return;
     }
 
     // set time
+    int open_time = -1, close_time = -1;
     try {
-        int open_time = msg["msg data"]["Open Time"].get<double>();
-        int close_time = msg["msg data"]["Close Time"].get<double>();
+        open_time = msg["msg data"]["Open Time"].get<double>();
+        close_time = msg["msg data"]["Close Time"].get<double>();
     } catch (std::exception &e) {
         ROS_ERROR("get time error: %s", e.what());
+        report_result_of_set_config(Res::Fail);
         return;
     }
 
     if (open_time > 24 || open_time < 0 || close_time > 24 || close_time < 0) {
         ROS_ERROR("open_time or close_time error: %d %d", open_time, close_time);
+        report_result_of_set_config(Res::Fail);
         return;
     }
 
     update_config_["Open Time"] = open_time;
     update_config_["Close Time"] = close_time;
-    print_json(update_config_);
+    print_json(update_config_, "new update config: ");
     std::ofstream f(update_config_path_);
-    if (!file) {
+    if (!f) {
         ROS_ERROR("open update_config.json error");
+        report_result_of_set_config(Res::Fail);
         return;
     }
-    file << update_config_.dump(4);
+    f << update_config_.dump(4);
+    report_result_of_set_config(Res::Success);
+}
+
+void AntworkUpdater::update_firmware(json &msg) {
+    // check param
+    if (!msg.contains("msg data") || !msg["msg data"].contains("Firmware Size") || !msg["msg data"].contains("URL")) {
+        ROS_ERROR("msg data error");
+        report_result_of_update_firmware(UpdateFirmwareRes::ParamError);
+        return;
+    }
+    try {
+        firmware_size_ = msg["msg data"]["Firmware Size"].get<double>();  // 单位: MB
+        firmware_url_ = msg["msg data"]["URL"].get<std::string>();
+        ROS_INFO_STREAM("firmware_size_: " << firmware_size_ << " firmware_url_: " << firmware_url_);
+    } catch (std::exception &e) {
+        ROS_ERROR("get firmware_size_ or firmware_url_ error: %s", e.what());
+        report_result_of_update_firmware(UpdateFirmwareRes::ParamError);
+        return;
+    }
+    if (!parse_firmware_url()) {
+        report_result_of_update_firmware(UpdateFirmwareRes::ParamError);
+        return;
+    }
+    // check /firmware exits
+    if (!is_directory(path("/firmware"))) {
+        ROS_INFO("firmware dir not exits, create dir");
+        create_directory(path("/firmware"));
+    }
+    path abs_path = path("/firmware") / path(firmware_name_.c_str());
+    ROS_INFO_STREAM("abs_path: " << abs_path.string());
+    report_result_of_update_firmware(UpdateFirmwareRes::Success);
+    ROS_INFO_STREAM("report result of update firmware success, start download");
+    std::thread download_thread(&AntworkUpdater::download_file_by_curl, this, firmware_url_, abs_path.string());
+    download_thread.detach();
+}
+
+void AntworkUpdater::report_result_of_update_firmware(UpdateFirmwareRes return_code) {
+    msg_["ack"] = static_cast<int>(Ack::Ack);
+    msg_["msg set"] = static_cast<int>(MsgSet::Update);
+    msg_["msg id"] = static_cast<int>(MsgId::RequestToUpdateFirmware);
+    msg_["msg data"] = {{"Return Code", static_cast<int>(return_code)}};
+    send_to_cloud(msg_.dump());
+}
+
+void AntworkUpdater::report_progress_of_update(double percent, double dl_speed) {
+    msg_["ack"] = static_cast<int>(Ack::NotAck);
+    msg_["msg set"] = static_cast<int>(MsgSet::Update);
+    msg_["msg id"] = static_cast<int>(MsgId::ReportProgressOfUpdate);
+    msg_["msg data"] = {
+        {"Percent", percent},
+        {"Download Speed", dl_speed},
+    };
+    send_to_cloud(msg_.dump());
+}
+
+void AntworkUpdater::report_status_of_update(UpdateStatus status) {
+    msg_["ack"] = static_cast<int>(Ack::NotAck);
+    msg_["msg set"] = static_cast<int>(MsgSet::Update);
+    msg_["msg id"] = static_cast<int>(MsgId::ReportStatusOfUpdate);
+    msg_["msg data"] = {{"Status", static_cast<int>(status)}};
+    print_json(msg_, "report status of update: ");
+    send_to_cloud(msg_.dump());
+}
+
+void AntworkUpdater::report_result_of_change_id(Res return_code) {
+    msg_["ack"] = static_cast<int>(Ack::Ack);
+    msg_["msg set"] = static_cast<int>(MsgSet::Other);
+    msg_["msg id"] = static_cast<int>(OtherMsgId::RequestToChangeId);
+    msg_["msg data"] = {{"Return Code", static_cast<int>(return_code)}};
+    send_to_cloud(msg_.dump());
 }
 
 /**
@@ -296,7 +406,7 @@ nlohmann::json AntworkUpdater::get_dir(const std::string &dir_path) {
     return dir_list;
 }
 
-void AntworkUpdater::print_json(json &j) { ROS_INFO_STREAM(j.dump(4)); }
+void AntworkUpdater::print_json(json &j, const std::string &str) { ROS_INFO_STREAM( str << j.dump(4)); }
 
 bool AntworkUpdater::uplod_file(const std::string &file_path, const std::string &url, const std::string &name) {
     CURL *curl;
@@ -371,8 +481,50 @@ void AntworkUpdater::handle_message_0102(json &msg) {
     } else {
         msg["msg data"]["Return Code"] = 2;
     }
-    print_json(msg);
+    print_json(msg, "respond to 0102 message: ");
     send_to_cloud(msg.dump());
+}
+
+void AntworkUpdater::change_id(json &msg) {
+    if (!msg.contains("msg data") || !msg["msg data"].contains("New ID")) {
+        ROS_ERROR("msg data error");
+        report_result_of_change_id(Res::Fail);
+        return;
+    }
+    int new_id;
+    try {
+        new_id = msg["msg data"]["ID"].get<int>();
+    } catch (std::exception &e) {
+        ROS_ERROR("get new_id error: %s", e.what());
+        report_result_of_change_id(Res::Fail);
+        return;
+    }
+
+    device_id_ = new_id;
+    msg_["id"] = device_id_;
+    ROS_INFO("device_id_ change to: %d", device_id_);
+
+    pugi::xml_document doc;
+    pugi::xml_parse_result result = doc.load_file(hardware_xml_path_.c_str());
+    if (!result) {
+        ROS_ERROR("load hardware.xml error: %s", result.description());
+        report_result_of_change_id(Res::Fail);
+        return;
+    }
+    pugi::xml_node root = doc.child("root");
+    pugi::xml_node flight_id = root.child("flight_ID");
+    if (flight_id) {
+        flight_id.text().set(device_id_);
+        doc.save_file(hardware_xml_path_.c_str());
+    } else {
+        ROS_ERROR("flight_id is empty");
+        report_result_of_change_id(Res::Fail);
+        return;
+    }
+
+    report_result_of_change_id(Res::Success);
+    ROS_INFO("change id success, will reboot");
+    std::system("reboot");
 }
 
 void AntworkUpdater::parse_install_info() {
@@ -385,10 +537,17 @@ void AntworkUpdater::parse_install_info() {
     while (std::getline(file, line)) {
         std::istringstream iss(line);
         std::string key, equal, value;
-        if (std::getline(iss, key, "=") && std::getline(iss, value)) {
+        if (std::getline(iss, key, '=') && std::getline(iss, value)) {
             ROS_INFO_STREAM("key: " << key << " value: " << value);
-            if (key == "VERSION") software_version_ = value;
-            if (key == "PLATFORM") device_platform_ = value;
+            if (key == "VERSION") {
+                software_version_ = value;
+                size_t index = software_version_.find('-');
+                if (index == std::string::npos) {
+                    ROS_ERROR("software_version_ error: %s", software_version_.c_str());
+                    return;
+                }
+                device_platform_ = software_version_.substr(0, index);
+            }
             if (key == "INSTALLATION_PATH") installation_path_ = value;
         }
     }
@@ -442,8 +601,7 @@ void AntworkUpdater::parse_update_config() {
     std::ifstream f(update_config_path_);
     try {
         update_config_ = json::parse(f);
-        print_json(update_config);
-        update_policy_str_ = update_config["Policy"].get<std::string>();
+        update_policy_str_ = update_config_["Policy"].get<std::string>();
         if (update_policy_str_ == "Auto") {
             update_policy_ = UpdatePolicy::Auto;
         } else if (update_policy_str_ == "Manual") {
@@ -451,10 +609,122 @@ void AntworkUpdater::parse_update_config() {
         } else if (update_policy_str_ == "All") {
             update_policy_ = UpdatePolicy::All;
         } else {
-            ROS_ERROR("update_policy_str error: %s", update_policy_str_);
+            ROS_ERROR("update_policy_str error: %s", update_policy_str_.c_str());
         }
     } catch (std::exception &e) {
         ROS_ERROR("parse update_config error : %s", e.what());
     }
-    print_json(update_config_);
+    print_json(update_config_, "update_config: ");
+}
+
+bool AntworkUpdater::parse_firmware_url() {
+    // check device platform
+    size_t platform_pos = firmware_url_.rfind(device_platform_);
+    size_t dot_pos = firmware_url_.find(".tar.gz");
+    if (platform_pos == std::string::npos || dot_pos == std::string::npos) {
+        ROS_ERROR("firmware_url_ error: %s", firmware_url_.c_str());
+        return false;
+    }
+    std::string version = firmware_url_.substr(platform_pos + device_platform_.length() + 1,
+                                             dot_pos - platform_pos - device_platform_.length() - 1);
+    ROS_INFO_STREAM("version: " << version);
+    if (version == software_version_) {
+        ROS_ERROR("already this version : %s !", version.c_str());
+        return false;
+    }
+    firmware_name_ = device_platform_ + "-" + version + ".tar.gz";
+    ROS_INFO_STREAM("firmware_name_: " << firmware_name_);
+    return true;
+}
+
+void AntworkUpdater::download_file_by_curl(const std::string &url, const std::string &file_path) {
+    ROS_INFO_STREAM("download file from: " << url << " to: " << file_path);
+    CURL *curl;
+    FILE *fp;
+    CURLcode res;
+    curl = curl_easy_init();
+    if (curl) {
+        curl_ = curl;
+        ROS_INFO("curl_easy_init() success");
+        fp = fopen(file_path.c_str(), "wb");
+        if (!fp) {
+            ROS_ERROR("open file error: %s", file_path.c_str());
+            report_status_of_update(UpdateStatus::DownloadFailed);
+            return;
+        }
+
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+        write_callback_function = std::bind(&AntworkUpdater::write_data, this, std::placeholders::_1,
+                                            std::placeholders::_2, std::placeholders::_3, std::placeholders::_4);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_wrapper);
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_PROGRESSDATA, curl);
+        progress_callback_function =
+            std::bind(&AntworkUpdater::progress_callback, this, std::placeholders::_1, std::placeholders::_2,
+                      std::placeholders::_3, std::placeholders::_4, std::placeholders::_5);
+        curl_easy_setopt(curl, CURLOPT_PROGRESSFUNCTION, progress_callback_wrapper);
+
+        report_status_of_update(UpdateStatus::Downloading);
+        res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            report_status_of_update(UpdateStatus::DownloadFailed);
+            ROS_ERROR("curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        }
+        report_status_of_update(UpdateStatus::DownloadSuccessfully);
+        curl_easy_cleanup(curl);
+        fclose(fp);
+    } else {
+        ROS_ERROR("curl_easy_init() failed");
+    }
+}
+
+size_t AntworkUpdater::write_data(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    size_t written = fwrite(ptr, size, nmemb, stream);
+    return written;
+}
+
+size_t write_data_wrapper(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+    return write_callback_function(ptr, size, nmemb, stream);
+}
+
+
+int AntworkUpdater::progress_callback(void* clientp, double dltotal, double dlnow, double ultotal, double ulnow) {
+    CURL* curl = static_cast<CURL*>(clientp);
+    double percent = dlnow / firmware_size_ / 1024 / 1024 * 100;
+
+    double speed;
+    CURLcode res = curl_easy_getinfo(curl, CURLINFO_SPEED_DOWNLOAD, &speed);
+    // 保留两位小数
+    percent = std::round(percent * 100) / 100; 
+    speed = std::round(speed * 100) / 100;
+    if (res != CURLE_OK) {
+        fprintf(stderr, "curl_easy_getinfo() failed: %s\n", curl_easy_strerror(res));
+    }
+    // cal time interval
+    auto now = std::chrono::system_clock::now();
+    if (now - last_report_time_ > std::chrono::seconds(2)) {
+        last_report_time_ = now;
+        report_progress_of_update(percent, speed);
+    }
+    return 0;
+}
+
+int progress_callback_wrapper(void *clientp, double dltotal, double dlnow, double ultotal, double ulnow) {
+    return progress_callback_function(clientp, dltotal, dlnow, ultotal, ulnow);
+}
+
+std::string AntworkUpdater::encode_url(const std::string &url) {
+    std::string result("");
+    CURL *curl = curl_easy_init();
+    if(curl) {
+        char *output = curl_easy_escape(curl, url.c_str(), url.length());
+        if(output) {
+            std::cout << "Encoded URL: " << output << std::endl;
+            result = output;
+            curl_free(output);
+        }
+    curl_easy_cleanup(curl);
+    }
+    return result;
 }
