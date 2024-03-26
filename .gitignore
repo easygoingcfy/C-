@@ -20,3 +20,4 @@ devel/
 *.vscode
 
 *.csv
+test.*

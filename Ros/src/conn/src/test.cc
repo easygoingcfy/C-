@@ -1,4 +1,5 @@
 #include "tcp.h"
+#include "udp.h"
 
 #include <iostream>
 #include <string>
@@ -6,7 +7,7 @@
 #include <chrono>
 #include <thread>
 
-using namespace flight_brain::mountable;
+using namespace flight_brain::conn;
 using namespace std;
 
 
@@ -17,9 +18,8 @@ void on_receive(char* data, size_t len) {
 
 
 void test() {
-    std::shared_ptr<ConnTcpClient> client = std::make_shared<ConnTcpClient>();
+    std::shared_ptr<ConnUdpClient> client = std::make_shared<ConnUdpClient>("127.0.0.1", 8889);
     client->set_receive_callback(&on_receive);
-    client->connect();
     client->run();
     //std::thread io_thread(&ConnTcpClient::run, client);
     //io_thread.detach();
@@ -28,8 +28,8 @@ void test() {
         auto now = std::chrono::system_clock::now();
         std::time_t end_time = std::chrono::system_clock::to_time_t(now);
         ss << "time: " << std::ctime(&end_time);
-        client->send_message(ss.str());
         cout << "send msg: " << ss.str();
+        client->send_message(ss.str());
         ss.clear();
         ss.str("");
         std::this_thread::sleep_for(std::chrono::seconds(5));

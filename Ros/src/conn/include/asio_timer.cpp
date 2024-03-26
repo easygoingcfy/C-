@@ -20,7 +20,7 @@ class AsioTimer : public std::enable_shared_from_this<AsioTimer> {
       std::function<void(const boost::system::error_code &e)> timeout_handler)
       : timer_(io_service), timeout_handler_(std::move(timeout_handler)) {}
 
-  ~AsioTimer() {}
+  virtual ~AsioTimer() {}
 
   void start(const uint64_t timeout_ms) { reset(timeout_ms); }
 
