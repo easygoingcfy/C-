@@ -11,11 +11,6 @@
 
 #pragma once
 
-#include <atomic>
-#include <deque>
-
-#include <boost/asio.hpp>
-
 #include "interface.h"
 
 namespace flight_brain {
