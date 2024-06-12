@@ -1,0 +1,6 @@
+monitor:
+    test: 77
+
+    node1:
+      cpu_threshold: 100
+      mem_threshold: 10

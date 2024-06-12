@@ -1,0 +1,9 @@
+<launch>
+    <env name="ROSCONSOLE_FORMAT" value="${time}[${severity}]${file}:${line}[${function}] ${message}" />
+    <rosparam command="load" file="$(find monitor)/launch/config.yaml" />
+
+    <node pkg="monitor" type="monitor_node" name="monitor" output="screen" respawn="true">
+        <param name="monitor_topic" value="/monitor"/>
+        <param name="monitor_rate" value="10"/>
+    </node>
+</launch>
